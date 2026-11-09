@@ -1,23 +1,18 @@
 # fake-clock
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/Trysac/u294-fake-clock.svg)](https://pkg.go.dev/github.com/Trysac/u294-fake-clock)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![CI](https://github.com/Trysac/u294-fake-clock/actions/workflows/ci.yml/badge.svg)](https://github.com/Trysac/u294-fake-clock/actions/workflows/ci.yml)
+`fake-clock` provides `fakeclock.Clock`, an interface for the time operations Go tests commonly need, with two implementations: `Real()`, a thin wrapper over the `time` package, and `New(start)`, a manual fake clock. The fake fires timers, tickers and sleeps only when the test calls `Advance` or `Set`; it does not sleep in wall-clock time.
 
-A Clock interface for Go with a real implementation and a manual fake whose timers, tickers and sleeps fire only when a test advances time
-
-## Problem
-
-Describe in two or three sentences the concrete problem this utility solves, who hits it, and what
-they do today without it. Replace this paragraph when the first real feature lands.
-
-## Install
+## Installation
 
 ```sh
 go get github.com/Trysac/u294-fake-clock
 ```
 
-Requires Go 1.23 or newer. No dependencies outside the standard library.
+Import the module as `fakeclock`:
+
+```go
+import fakeclock "github.com/Trysac/u294-fake-clock"
+```
 
 ## Usage
 
@@ -25,31 +20,47 @@ Requires Go 1.23 or newer. No dependencies outside the standard library.
 package main
 
 import (
-	"errors"
-	"fmt"
-
-	"github.com/Trysac/u294-fake-clock"
+    "time"
+    fakeclock "github.com/Trysac/u294-fake-clock"
 )
-
 func main() {
-	// Normalize trims surrounding whitespace and lower-cases the text.
-	out, _ := fakeclock.Normalize("  Hello World ")
-	fmt.Println(out) // -> "hello world"
-
-	// Blank input is rejected explicitly instead of returning an empty string.
-	if _, err := fakeclock.Normalize("   "); errors.Is(err, fakeclock.ErrBlank) {
-		fmt.Println("rejected:", err)
-	}
+    f := fakeclock.New(time.Unix(0, 0)); ch := f.After(time.Second)
+    f.Advance(time.Second); <-ch
 }
 ```
 
-## Documentation
+## Public API
 
-- [Architecture](docs/ARCHITECTURE.md) and [decisions](docs/decisions/)
-- [Testing](docs/TESTING.md) and [security](docs/SECURITY.md)
-- [Project record](docs/PROJECT.md) and [stack](docs/STACK.md)
-- [Changelog](CHANGELOG.md) and [contributing guide](CONTRIBUTING.md)
+- `type Clock interface { Now() time.Time; Since(t time.Time) time.Duration; After(d time.Duration) <-chan time.Time; Sleep(d time.Duration); NewTimer(d time.Duration) Timer; NewTicker(d time.Duration) Ticker }`
+- `type Timer interface { C() <-chan time.Time; Stop() bool; Reset(d time.Duration) bool }`
+- `type Ticker interface { C() <-chan time.Time; Stop(); Reset(d time.Duration) }`
+- `func Real() Clock`
+- `type Fake struct` with `func New(start time.Time) *Fake` and methods `Now`, `Since`, `After`, `Sleep`, `NewTimer`, `NewTicker`, `Advance(d time.Duration)`, `Set(t time.Time)`, `Waiters() int`, `BlockUntilContext(ctx context.Context, n int) error`.
 
-## License
+### Errors and panics
 
-[MIT](LICENSE) (c) 2026 Miguel Gomez
+`BlockUntilContext` is the only method that returns an error: it returns `ctx.Err()` if the context is already cancelled or becomes done before enough waiters are reached. The package has no sentinel errors and no configuration options.
+
+Programmer errors panic with these exact messages:
+
+- `Advance(d)` with a negative duration: `fakeclock: negative advance`
+- `Set(t)` to an earlier time: `fakeclock: time moved backwards`
+- `NewTicker(d)` with a non-positive interval: `fakeclock: non-positive ticker interval`
+
+### Limits and behavior
+
+Every timer, ticker and `After` channel has a buffer of 1 and a send never blocks. A full ticker channel drops the tick, like `time.Ticker`.
+
+`Advance` moves time to each due deadline in order; ties are broken by creation sequence. `Now` is set to each deadline before firing, so timers created during `Advance` with a deadline inside the window fire in the same call. `Set` to a later time fires due timers the same way.
+
+`After(d <= 0)` and `NewTimer(d <= 0)` fire on the next `Advance(0)`. `Sleep(d <= 0)` returns immediately. `Waiters` counts goroutines blocked in `Sleep` plus pending `After`/`NewTimer` channels not yet fired. `BlockUntilContext` waits on a condition variable until `Waiters() >= n` or the context is done; it does not poll.
+
+Out of scope: time zones, monotonic clock readings, and `AfterFunc`. The module uses the Go standard library only.
+
+## Why not benbjohnson/clock
+
+The specification names `benbjohnson/clock`, which is archived. This package is maintained, exposes a smaller `Clock`/`Timer`/`Ticker` interface, and documents the firing order: deadline first, then creation sequence.
+
+## Security
+
+See [docs/SECURITY.md](docs/SECURITY.md).
