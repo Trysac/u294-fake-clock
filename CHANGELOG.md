@@ -9,4 +9,5 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Added Clock interface with real and fake implementations for deterministic time-based testing.
 - Initial project structure from the factory utility template.
